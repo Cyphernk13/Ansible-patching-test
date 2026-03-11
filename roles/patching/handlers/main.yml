@@ -1,0 +1,13 @@
+# roles/patching/handlers/main.yml
+# Handlers run only when triggered by 'notify' in a task
+---
+
+- name: restart sshd
+  service:
+    name: sshd
+    state: restarted
+
+- name: restart httpd
+  service:
+    name: httpd
+    state: restarted

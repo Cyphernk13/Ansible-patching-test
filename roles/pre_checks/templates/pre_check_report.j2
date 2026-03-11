@@ -1,0 +1,12 @@
+============================================
+PRE-PATCHING SERVER HEALTH REPORT
+============================================
+Server Name:   {{ ansible_hostname }}
+OS Version:    {{ ansible_distribution }} {{ ansible_distribution_version }}
+Kernel:        {{ ansible_kernel }}
+Patch Start:   {{ patch_start_time }}
+--------------------------------------------
+MEMORY STATUS
+Total RAM:     {{ ansible_memtotal_mb }} MB
+Free RAM:      {{ ansible_memfree_mb }} MB
+============================================

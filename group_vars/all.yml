@@ -1,0 +1,20 @@
+# group_vars/all.yml
+# Variables available to ALL servers and ALL roles
+---
+
+# Who is running this patching? (for reports)
+patch_author: 'admin'
+
+# Email to send report to (optional)
+notify_email: 'ops@company.com'
+
+# How many minutes to wait for server to come back after reboot
+reboot_timeout: 300
+
+# Should we take a snapshot before patching? (AWS feature)
+take_snapshot: false
+
+# Critical services that MUST be running after patching
+critical_services:
+  - sshd
+  - chronyd
