@@ -1,119 +1,43 @@
 # roles/pre_checks/tasks/main.yml
 # Pre-patching checks - runs BEFORE any updates are applied
 ---
-# ============================================================
-# TASK 1: Gather system facts (MOVED TO THE TOP)
-# ============================================================
-- name: Gather system facts (OS, memory, disk)
-  setup:
-    gather_subset:
-      - min
-      - hardware
-      - network
-      - virtual
-  tags: pre_check
-
-# ============================================================
-# TASK 2: Record the current timestamp (NOW RUNS SECOND)
-# ============================================================
 - name: Record patching start time
-  set_fact:
+  ansible.builtin.set_fact:
     patch_start_time: "{{ ansible_date_time.iso8601 }}"
-  tags: pre_check
 
-# ===========================================================# ============================================================
-# TASK 3: Check OS and kernel version
-# ============================================================
-- name: Display OS version
-  debug:
-    msg: |
-      OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
-      Kernel: {{ ansible_kernel }}
-      Hostname: {{ ansible_hostname }}
-  tags: pre_check
+- name: Verify minimum free disk space on root (>= 20%)
+  ansible.builtin.assert:
+    that:
+      - (item.size_available / item.size_total) > 0.20
+    fail_msg: "CRITICAL: Disk space on {{ item.mount }} is below 20%."
+  loop: "{{ ansible_mounts }}"
+  when: item.mount == '/'
 
-# ============================================================
-# TASK 4: Check disk space (CRITICAL - updates need space)
-# ============================================================
-- name: Check disk space on root partition
-  shell: df -h / | tail -1 | awk '{print $5}' | sed 's/%//'
-  register: disk_usage        # Save output to variable 'disk_usage'
-  changed_when: false          # This task only reads, doesn't change anything
-  tags: pre_check
-
-- name: FAIL if disk is more than 80% full
-  fail:
-    msg: "DISK SPACE CRITICAL: {{ disk_usage.stdout }}% used. Need at least 20% free!"
-  when: disk_usage.stdout | int > 80    # Only fail if disk > 80%
-  tags: pre_check
-
-# ============================================================
-# TASK 5: Check available memory
-# ============================================================
-- name: Check available memory
-  debug:
-    msg: |
-      Total RAM: {{ ansible_memtotal_mb }} MB
-      Free RAM:  {{ ansible_memfree_mb }} MB
-  tags: pre_check
-
-# ============================================================
-# TASK 6: Save list of ALL currently installed packages
-# This creates a 'before' snapshot
-# ============================================================
-- name: Save list of installed packages (before patching)
-  shell: rpm -qa --queryformat '%{NAME}-%{VERSION}\n' | sort
-  register: packages_before
+- name: Collect currently installed packages (RedHat family)
+  ansible.builtin.shell: rpm -qa --queryformat '%{NAME}-%{VERSION}\n' | sort
+  register: pkg_before_rhel
   changed_when: false
-  tags: pre_check
+  when: ansible_os_family == "RedHat"
 
-- name: Save package list to file
-  copy:
-    content: "{{ packages_before.stdout }}"
+- name: Collect currently installed packages (Debian family)
+  ansible.builtin.shell: dpkg-query -f '${binary:Package}-${Version}\n' -W | sort
+  register: pkg_before_deb
+  changed_when: false
+  when: ansible_os_family == "Debian"
+
+- name: Save initial package list
+  ansible.builtin.copy:
+    content: "{{ pkg_before_rhel.stdout if ansible_os_family == 'RedHat' else pkg_before_deb.stdout }}"
     dest: /tmp/packages_before_patch.txt
-  tags: pre_check
+    mode: '0644'
 
-# ============================================================
-# TASK 7: Check which services are running
-# ============================================================
-- name: Check status of critical services
-  service_facts:              # Gathers all service info
-  tags: pre_check
+- name: Gather service facts
+  ansible.builtin.service_facts:
 
-- name: Report service status
-  debug:
-    msg: "{{ item }} is {{ ansible_facts.services[item + '.service'].state }}"
-  loop: "{{ critical_services }}"   # Loop through our list from group_vars
+- name: Verify critical services are running before patching
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.services[item + '.service'].state == 'running'
+    fail_msg: "CRITICAL: Pre-check failed. {{ item }} is not running."
+  loop: "{{ critical_services }}"
   when: item + '.service' in ansible_facts.services
-  tags: pre_check
-
-# ============================================================
-# TASK 8: Ping to confirm connectivity is working
-# ============================================================
-- name: Verify network connectivity
-  ping:
-  tags: pre_check
-
-# ============================================================
-# TASK 9: Check available updates (don't install yet)
-# ============================================================
-- name: Check what updates are available
-  shell: dnf check-update --quiet 2>/dev/null | wc -l
-  register: update_count
-  failed_when: update_count.rc not in [0, 100]  # dnf returns 100 when updates available
-  changed_when: false
-  tags: pre_check
-
-- name: Show update count
-  debug:
-    msg: "{{ update_count.stdout }} packages available for update"
-  tags: pre_check
-
-# ============================================================
-# TASK 10: Save all pre-check results to report file
-# ============================================================
-- name: Save pre-check summary report
-  template:
-    src: pre_check_report.j2
-    dest: /tmp/pre_check_report_{{ ansible_hostname }}.txt
-  tags: pre_check

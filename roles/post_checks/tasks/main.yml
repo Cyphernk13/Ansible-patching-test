@@ -1,111 +1,55 @@
 # roles/post_checks/tasks/main.yml
 # Post-patching verification - runs AFTER updates are applied
 ---
+- name: Wait for connection to ensure server is operational
+  ansible.builtin.wait_for_connection:
+    timeout: 300
 
-# ============================================================
-# TASK 1: Wait for server to be fully ready
-# ============================================================
-- name: Wait for server to be fully operational
-  wait_for_connection:
-    timeout: 300              # Wait up to 5 minutes
-  tags: post_check
+- name: Gather fresh facts
+  ansible.builtin.setup:
 
-# ============================================================
-# TASK 2: Gather fresh facts after patching
-# ============================================================
-- name: Gather fresh system facts after patching
-  setup:
-    gather_subset:
-      - min
-  tags: post_check
-
-# ============================================================
-# TASK 3: Check new kernel version
-# ============================================================
-- name: Display new kernel version
-  debug:
-    msg: "New kernel running: {{ ansible_kernel }}"
-  tags: post_check
-
-# ============================================================
-# TASK 4: Verify ALL critical services are running
-# ============================================================
 - name: Refresh service facts
-  service_facts:
-  tags: post_check
+  ansible.builtin.service_facts:
 
 - name: Verify critical services are running
-  assert:                     # assert = 'make sure this is true or FAIL'
+  ansible.builtin.assert:
     that:
-      - "ansible_facts.services[item + '.service'].state == 'running'"
-    fail_msg: "CRITICAL: {{ item }} is NOT running after patching!"
-    success_msg: "OK: {{ item }} is running"
+      - ansible_facts.services[item + '.service'].state == 'running'
+    fail_msg: "CRITICAL: {{ item }} failed to start after patching."
   loop: "{{ critical_services }}"
   when: item + '.service' in ansible_facts.services
-  tags: post_check
 
-# ============================================================
-# TASK 5: Check disk space after patching
-# ============================================================
-- name: Check disk space after patching
-  shell: df -h / | tail -1 | awk '{print $5}' | sed 's/%//'
-  register: disk_after
+- name: Collect newly installed packages (RedHat family)
+  ansible.builtin.shell: rpm -qa --queryformat '%{NAME}-%{VERSION}\n' | sort
+  register: pkg_after_rhel
   changed_when: false
-  tags: post_check
+  when: ansible_os_family == "RedHat"
 
-# ============================================================
-# TASK 6: Get new package list and compare with before
-# ============================================================
-- name: Get package list after patching
-  shell: rpm -qa --queryformat '%{NAME}-%{VERSION}\n' | sort
-  register: packages_after
+- name: Collect newly installed packages (Debian family)
+  ansible.builtin.shell: dpkg-query -f '${binary:Package}-${Version}\n' -W | sort
+  register: pkg_after_deb
   changed_when: false
-  tags: post_check
+  when: ansible_os_family == "Debian"
 
-- name: Save new package list
-  copy:
-    content: "{{ packages_after.stdout }}"
+- name: Save final package list
+  ansible.builtin.copy:
+    content: "{{ pkg_after_rhel.stdout if ansible_os_family == 'RedHat' else pkg_after_deb.stdout }}"
     dest: /tmp/packages_after_patch.txt
-  tags: post_check
+    mode: '0644'
 
-# ============================================================
-# TASK 7: Show packages that were updated
-# ============================================================
-- name: Show what packages changed
-  shell: diff /tmp/packages_before_patch.txt /tmp/packages_after_patch.txt || true
+- name: Determine changed packages
+  ansible.builtin.command: diff /tmp/packages_before_patch.txt /tmp/packages_after_patch.txt
   register: package_diff
-  changed_when: false
-  tags: post_check
+  failed_when: false
+  changed_when: package_diff.rc != 0
 
-- name: Display changed packages
-  debug:
+- name: Print executive patching summary
+  ansible.builtin.debug:
     msg: |
-      PACKAGES CHANGED:
-      {{ package_diff.stdout }}
-  tags: post_check
-
-# ============================================================
-# TASK 8: Final health check - ping the server
-# ============================================================
-- name: Final connectivity check
-  ping:
-  tags: post_check
-
-# ============================================================
-# TASK 9: Generate final patching report
-# ============================================================
-- name: Generate post-patching summary
-  debug:
-    msg: |
-      ============================================
-      PATCHING COMPLETE - SUMMARY REPORT
-      ============================================
-      Server:        {{ ansible_hostname }}
+      --- PATCHING SUMMARY ---
+      Hostname:      {{ inventory_hostname }}
       OS:            {{ ansible_distribution }} {{ ansible_distribution_version }}
-      Kernel:        {{ ansible_kernel }}
-      Patch Start:   {{ patch_start_time }}
-      Patch End:     {{ patch_end_time }}
-      Disk Usage:    {{ disk_after.stdout }}%
-      Status:        SUCCESS ✓
-      ============================================
-  tags: post_check
+      Active Kernel: {{ ansible_kernel }}
+      Duration:      {{ patch_start_time }} to {{ patch_end_time }}
+      Rebooted:      {{ patch_reboot_required | default(false) }}
+      Updates:       {{ 'Changes detected' if package_diff.rc != 0 else 'No packages required updates' }}

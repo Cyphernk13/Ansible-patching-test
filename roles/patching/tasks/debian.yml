@@ -1,0 +1,23 @@
+---
+- name: Update package cache (Debian)
+  ansible.builtin.apt:
+    update_cache: yes
+
+- name: Apply patches (Debian)
+  ansible.builtin.apt:
+    upgrade: dist
+  register: deb_patch_result
+
+- name: Clean up unused packages (Debian)
+  ansible.builtin.apt:
+    autoremove: yes
+    purge: yes
+
+- name: Check if reboot is required (Debian)
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: deb_reboot_check
+
+- name: Set reboot requirement flag
+  ansible.builtin.set_fact:
+    patch_reboot_required: "{{ deb_reboot_check.stat.exists }}"

@@ -1,18 +1,20 @@
 # site.yml - Master Playbook
 # This is what you run: ansible-playbook site.yml
 ---
-- name: Complete Server Patching Workflow
-  hosts: webservers            # Run on 'webservers' group from hosts.ini
-  gather_facts: no            # Collect server information at start
-  serial: 1                    # Patch ONE server at a time (safer!)
-                               # Change to 2 or 50% to patch more at once
+- name: Enterprise Server Patching Workflow
+  hosts: webservers
+  gather_facts: yes
+  serial: 1 # Perform rolling updates to maintain application availability
 
   roles:
-    - role: pre_checks         # Step 1: Check server health BEFORE
-    - role: patching           # Step 2: Apply updates
-    - role: post_checks        # Step 3: Verify server health AFTER
+    - role: pre_checks
+      tags: pre_check
+    - role: patching
+      tags: patch
+    - role: post_checks
+      tags: post_check
 
-  post_tasks:                  # Runs after all roles complete
-    - name: Patching workflow completed
-      debug:
-        msg: "All patching tasks completed for {{ ansible_hostname | default(inventory_hostname) }}"
+  post_tasks:
+    - name: Workflow completed
+      ansible.builtin.debug:
+        msg: "Patching cycle completed successfully for {{ inventory_hostname }}"

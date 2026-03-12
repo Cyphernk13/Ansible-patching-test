@@ -1,0 +1,25 @@
+---
+- name: Update package cache (RedHat)
+  ansible.builtin.dnf:
+    update_cache: yes
+
+- name: Apply patches (RedHat)
+  ansible.builtin.dnf:
+    name: '*'
+    state: latest
+    security: "{{ apply_security_only }}"
+  register: rhel_patch_result
+
+- name: Clean up unused packages (RedHat)
+  ansible.builtin.dnf:
+    autoremove: yes
+
+- name: Check if reboot is required by kernel updates (RedHat)
+  ansible.builtin.command: needs-restarting -r
+  register: rhel_reboot_check
+  failed_when: false
+  changed_when: false
+
+- name: Set reboot requirement flag
+  ansible.builtin.set_fact:
+    patch_reboot_required: "{{ rhel_reboot_check.rc == 1 }}"
